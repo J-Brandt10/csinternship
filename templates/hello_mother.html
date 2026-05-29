@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hello Mother</title>
+  <link href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" rel="stylesheet" />
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(270deg, #ff6ec7, #ff9a3c, #ffec40, #40ff9a, #40c8ff, #c840ff);
+      background-size: 600% 600%;
+      animation: rainbow 6s ease infinite;
+    }
+
+    @keyframes rainbow {
+      0%   { background-position: 0% 50%; }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    h1 {
+      font-family: 'Pacifico', cursive;
+      font-size: clamp(3rem, 12vw, 8rem);
+      font-weight: bold;
+      color: #fff;
+      text-shadow:
+        4px 4px 0 #ff6ec7,
+        8px 8px 0 rgba(0, 0, 0, 0.15);
+      text-align: center;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.05); }
+    }
+  </style>
+</head>
+<body>
+  <h1>Hello Mother</h1>
+</body>
+</html>

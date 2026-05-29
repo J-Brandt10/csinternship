@@ -13,5 +13,10 @@ def calculator():
     return render_template("calculator.html")
 
 
+@app.route("/hello-mother")
+def hello_mother():
+    return render_template("hello_mother.html")
+
+
 if __name__ == "__main__":
     app.run(debug=True)
