@@ -29,3 +29,15 @@ def test_calculator_content(client):
     assert b"Calculator" in response.data
     assert b"clearAll" in response.data
     assert b"calculate" in response.data
+
+
+def test_hello_mother_status(client):
+    response = client.get("/hello-mother")
+    assert response.status_code == 200
+
+
+def test_hello_mother_content(client):
+    response = client.get("/hello-mother")
+    assert b"Hello Mother" in response.data
+    assert b"Pacifico" in response.data
+    assert b"rainbow" in response.data
