@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Activity Feed — ES Quote Tracker</title>
+  <style>
+    /* ── Design tokens (subset of main app) ──────────────────────────────── */
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: rgba(255,255,255,0.08);
+      --border2: rgba(255,255,255,0.14);
+      --text: #e8eaf0;
+      --text-2: #b0b8cc;
+      --text-3: #6b7280;
+      --red: #e03030;
+      --amber: #e8973b;
+      --green: #2d9e6b;
+      --blue: #3b82f6;
+      --r: 6px;
+      --font: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+      --mono: "JetBrains Mono", "Fira Code", monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 32px;
+      min-height: 100vh;
+      padding: 32px 24px;
+    }
+
+    /* ── Feed container — fixed height to show scrolling behaviour ────────── */
+    .pipeline-feed {
+      width: 340px;
+      height: 560px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg);
+    }
+
+    /* ── Feed header ──────────────────────────────────────────────────────── */
+    .feed-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .feed-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    /* ── FIX 2: Scrolling ─────────────────────────────────────────────────
+       overflow-y: auto  → vertical scroll when entries overflow the height
+       min-height: 0     → classic flex-child fix: lets the body shrink below
+                           its content size so overflow actually engages
+       overflow-x: hidden → no horizontal blowout on long tokens
+       Children must NOT shrink (see .feed-body > * below), otherwise flex
+       squishes rows to ~18px and clips their text instead of scrolling.   */
+    .feed-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    /* FIX 2 (cont.): keep children at their natural height so the body
+       overflows and the scrollbar appears instead of squishing content. */
+    .feed-body > * { flex-shrink: 0; }
+    .feed-body::-webkit-scrollbar { width: 3px; }
+    .feed-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+    /* ── Grouped feed cards ───────────────────────────────────────────────── */
+    .feed-group {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      transition: border-color 0.15s;
+    }
+    .feed-group.has-error   { border-color: rgba(224,48,48,0.5);  border-left: 3px solid var(--red); }
+    .feed-group.needs-action { border-color: rgba(232,151,59,0.5); border-left: 3px solid var(--amber); }
+    .feed-group.is-ok       { border-left: 3px solid var(--green); }
+
+    .feed-group-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      min-height: 40px;
+      user-select: none;
+    }
+    .feed-group-header:hover { background: var(--surface2); }
+    .feed-group.has-error .feed-group-header    { background: rgba(224,48,48,0.04); }
+    .feed-group.needs-action .feed-group-header { background: rgba(232,151,59,0.04); }
+
+    .feed-group-chevron {
+      font-size: 7px;
+      color: var(--text-3);
+      transition: transform 0.15s;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .feed-group.open .feed-group-chevron { transform: rotate(90deg); }
+
+    .feed-group-body {
+      border-top: 1px solid var(--border);
+      padding: 10px 12px;
+      display: none;
+      background: var(--surface2);
+    }
+    .feed-group.open .feed-group-body { display: block; }
+
+    /* Individual log entries inside an expanded group */
+    .feed-group-entry {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border);
+      min-width: 0;
+    }
+    .feed-group-entry:last-child { border-bottom: none; }
+
+    .feed-group-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    /* FIX 1: Text wrapping ─────────────────────────────────────────────────
+       word-break: normal        → words wrap at spaces (natural behaviour)
+       overflow-wrap: break-word → only breaks a token that has no break
+                                   opportunity (long model number, URL, etc.)
+       The previous values (break-word / anywhere) broke words mid-character
+       even when a space was nearby, causing ragged, messy text.            */
+    .feed-group-msg {
+      flex: 1;
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.5;
+      word-break: normal;
+      overflow-wrap: break-word;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .feed-group-time {
+      font-size: 10px;
+      color: var(--text-3);
+      font-family: var(--mono);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* Ungrouped / standalone system entries */
+    .feed-ungrouped {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      padding: 6px 4px;
+      border-bottom: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 2px;
+    }
+    .feed-ungrouped:last-child { border-bottom: none; margin-bottom: 0; }
+    .feed-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+
+    /* FIX 1 (cont.): same wrap fix for ungrouped message text */
+    .feed-msg {
+      flex: 1;
+      font-size: 11px;
+      color: var(--text-2);
+      line-height: 1.4;
+      word-break: normal;
+      overflow-wrap: break-word;
+      min-width: 0;
+    }
+    .feed-time { font-size: 10px; color: var(--text-3); font-family: var(--mono); white-space: nowrap; }
+
+    /* ── Buttons ──────────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-family: var(--font);
+      font-weight: 500;
+      border: 1px solid var(--border2);
+      border-radius: var(--r);
+      background: var(--surface2);
+      color: var(--text-2);
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .btn:hover { background: var(--border2); color: var(--text); }
+    .btn-icon { width: 26px; height: 26px; padding: 0; border-radius: var(--r); }
+
+    /* Per-entry dismiss ✕ button */
+    .dismiss-btn {
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      color: var(--text-3);
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+      padding: 2px 4px;
+      font-family: var(--font);
+    }
+    .dismiss-btn:hover { color: var(--text-2); }
+
+    /* ── Sidebar notes ────────────────────────────────────────────────────── */
+    .notes {
+      width: 280px;
+      font-size: 12px;
+      color: var(--text-3);
+      line-height: 1.6;
+    }
+    .notes h3 { font-size: 11px; font-weight: 700; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 10px; }
+    .notes p { margin-bottom: 10px; }
+    .notes code { font-family: var(--mono); font-size: 11px; color: var(--amber); background: rgba(232,151,59,0.1); padding: 1px 4px; border-radius: 3px; }
+    .fix-label { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; margin-bottom: 4px; }
+    .fix-1 { background: rgba(59,130,246,0.15); color: #60a5fa; }
+    .fix-2 { background: rgba(45,158,107,0.15); color: #4ade80; }
+    .fix-3 { background: rgba(232,151,59,0.15); color: var(--amber); }
+  </style>
+</head>
+<body>
+
+<div class="pipeline-feed">
+  <div class="feed-header">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="feed-title">Activity</span>
+      <span id="feed-action-count" style="display:none;background:var(--red);color:white;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;align-items:center;justify-content:center;padding:0 5px;line-height:1">0</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:4px">
+      <button id="feed-clear-btn" class="btn btn-icon" onclick="clearDoneGroups()" title="Clear completed activity" style="font-size:11px;display:none">✕</button>
+      <button class="btn btn-icon" onclick="renderLog()" title="Refresh" style="font-size:11px">↻</button>
+    </div>
+  </div>
+  <div class="feed-body" id="log-wrap">
+    <div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No activity yet</div>
+  </div>
+</div>
+
+<div class="notes">
+  <h3>What was fixed</h3>
+
+  <p><span class="fix-label fix-1">FIX 1 — Text wrapping</span><br>
+  Changed <code>overflow-wrap: anywhere</code> → <code>overflow-wrap: break-word</code> on <code>.feed-group-msg</code> and <code>.feed-msg</code>. The <code>anywhere</code> value broke words mid-character even when a space was nearby, making short words ragged. <code>break-word</code> only breaks genuinely unbreakable tokens (long model numbers, URLs).</p>
+
+  <p><span class="fix-label fix-2">FIX 2 — Scrolling</span><br>
+  Added <code>.feed-body &gt; * &#123; flex-shrink: 0; &#125;</code>. Without it, flex squishes child rows to ~18 px and clips their text instead of overflowing. <code>min-height: 0</code> on the body itself lets the container shrink so <code>overflow-y: auto</code> actually engages.</p>
+
+  <p><span class="fix-label fix-3">FIX 3 — Error clearing</span><br>
+  Added <code>_entryNeedsResponse()</code> which is <em>false</em> for bare errors (unlike <code>_entryPending</code>). The ✕ Clear button and per-entry dismiss ✕ now use this predicate, so red error notifications can finally be removed. A 30-second auto-sweep clears resolved entries automatically.</p>
+
+  <p style="margin-top:16px;font-size:11px;color:var(--text-3)">Scroll the feed on the left to see Fix 2. Expand the red group to see per-entry dismiss ✕ (Fix 3). Click the header ✕ to clear all clearable entries.</p>
+</div>
+
+<script>
+// ── Activity log state ────────────────────────────────────────────────────────
+let actLog = [];
+let _nextId = 1;
+
+const FEED_AUTO_CLEAR_MS = 30000; // 30 s grace before resolved entries auto-dismiss
+
+function addLog(msg, type, quoteNum, customer, time) {
+  actLog.unshift({ id: String(_nextId++), msg, type: type || 'scan', quoteNum: quoteNum || null, customer: customer || null, time: time || new Date().toISOString() });
+  if (actLog.length > 100) actLog.pop();
+  renderLog();
+}
+
+function fmtTime(iso) {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ── Entry predicates ──────────────────────────────────────────────────────────
+
+// True while the entry needs a human: bare errors, or has an open prompt.
+function _entryPending(e) {
+  return e.type === 'err' || (e.retry && !e.retryDone) || (e.feedback && !e.feedbackDone);
+}
+
+// FIX 3: True ONLY when there is an open input/confirmation prompt.
+// Bare errors return false here — they are notifications the operator can clear.
+function _entryNeedsResponse(e) {
+  return (e.retry && !e.retryDone) || (e.feedback && !e.feedbackDone);
+}
+
+// ── Resolution marks (drive 30-second auto-sweep) ─────────────────────────────
+
+function _updateResolutionMarks() {
+  const now = Date.now();
+  const groups = {}, solo = [];
+  for (const e of actLog) {
+    if (e.quoteNum && e.customer) {
+      const k = e.quoteNum + '||' + e.customer;
+      (groups[k] = groups[k] || []).push(e);
+    } else {
+      solo.push(e);
+    }
+  }
+  for (const k in groups) {
+    const arr = groups[k];
+    const clearable = !arr.some(_entryPending);
+    if (!clearable) { arr.forEach(e => { e._doneAt = null; }); }
+    else if (arr.some(e => !e._doneAt)) { arr.forEach(e => { e._doneAt = now; }); }
+  }
+  for (const e of solo) {
+    const clearable = !_entryPending(e);
+    e._doneAt = clearable ? (e._doneAt || now) : null;
+  }
+}
+
+function _sweepResolvedFeed() {
+  const cutoff = Date.now() - FEED_AUTO_CLEAR_MS;
+  const before = actLog.length;
+  actLog = actLog.filter(e => !(e._doneAt && e._doneAt <= cutoff));
+  if (actLog.length !== before) renderLog();
+}
+
+// When a quote group has no open prompts AND a later step succeeded after an
+// error, flip the stale red error to resolved (green) so the group auto-clears.
+function _autoResolveSupersededErrors() {
+  const groups = {};
+  for (const e of actLog) {
+    if (e.quoteNum && e.customer) {
+      const k = e.quoteNum + '||' + e.customer;
+      (groups[k] = groups[k] || []).push(e);
+    }
+  }
+  for (const k in groups) {
+    const arr = groups[k];
+    if (arr.some(_entryNeedsResponse)) continue;
+    const errs = arr.filter(e => e.type === 'err');
+    if (!errs.length) continue;
+    const newestErr = Math.max(...errs.map(e => +new Date(e.time)));
+    const hasNewerSuccess = arr.some(e => e.type !== 'err' && +new Date(e.time) > newestErr);
+    if (hasNewerSuccess) errs.forEach(e => { e.type = 'scan'; e.resolved = true; });
+  }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function _entryDotColor(e) {
+  if (e.type === 'err')  return 'var(--red)';
+  if (e.type === 'warn') return 'var(--amber)';
+  if (e.resolved)        return 'var(--green)';
+  return 'var(--blue)';
+}
+
+function _logEntryHtml(e) {
+  const dot = _entryDotColor(e);
+  // FIX 3: Show per-entry dismiss ✕ on bare errors and resolved steps.
+  // Never on entries with an open prompt — those keep their own controls.
+  const showDismiss = (e.type === 'err' || e.resolved) && !_entryNeedsResponse(e);
+  const dismissBtn = showDismiss
+    ? `<button class="dismiss-btn" onclick="event.stopPropagation();dismissLogEntry('${esc(e.id)}')" title="Dismiss">✕</button>`
+    : '';
+  return `<div class="feed-group-entry">
+    <div class="feed-group-dot" style="background:${dot}"></div>
+    <span class="feed-group-msg">${esc(e.msg)}</span>
+    <span class="feed-group-time">${fmtTime(e.time)}</span>
+    ${dismissBtn}
+  </div>`;
+}
+
+function renderLog() {
+  _autoResolveSupersededErrors();
+  _updateResolutionMarks();
+  if (!window._feedSweepTimer) {
+    window._feedSweepTimer = setInterval(_sweepResolvedFeed, 3000);
+  }
+
+  const wrap = document.getElementById('log-wrap');
+  const entries = actLog.slice(0, 100);
+  if (!entries.length) {
+    wrap.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No activity yet</div>';
+    _updateHeader(0, 0);
+    return;
+  }
+
+  const grouped = {}, ungrouped = [];
+  for (const e of entries) {
+    if (e.quoteNum && e.customer) {
+      const key = e.quoteNum + '||' + e.customer;
+      if (!grouped[key]) grouped[key] = { quoteNum: e.quoteNum, customer: e.customer, entries: [], hasError: false, hasAction: false, latestTime: e.time };
+      grouped[key].entries.push(e);
+      if (e.type === 'err') grouped[key].hasError = true;
+      if ((e.retry && !e.retryDone) || (e.feedback && !e.feedbackDone)) grouped[key].hasAction = true;
+    } else {
+      ungrouped.push(e);
+    }
+  }
+
+  const groupKeys = Object.keys(grouped).sort((a, b) => new Date(grouped[b].latestTime) - new Date(grouped[a].latestTime));
+  let html = '';
+
+  for (const key of groupKeys) {
+    const g = grouped[key];
+    const autoOpen = g.hasError || g.hasAction;
+    const groupClass = 'feed-group' + (g.hasError ? ' has-error' : g.hasAction ? ' needs-action' : ' is-ok') + (autoOpen ? ' open' : '');
+    const statusIcon = g.hasError ? '🔴' : g.hasAction ? '🟡' : '🟢';
+    const projectShort = (g.customer || '').replace(/\s*[—–-]\s*\S+$/, '').trim() || g.customer;
+
+    const statusChip = g.hasError
+      ? `<span style="font-size:10px;font-weight:700;color:var(--red);background:rgba(224,48,48,0.15);padding:3px 8px;border-radius:4px;white-space:nowrap;flex-shrink:0">⚠ Error</span>`
+      : g.hasAction
+      ? `<span style="font-size:10px;font-weight:700;color:var(--amber);background:rgba(232,151,59,0.15);padding:3px 8px;border-radius:4px;white-space:nowrap;flex-shrink:0">→ Action needed</span>`
+      : `<span style="font-size:10px;color:var(--green);background:rgba(45,158,107,0.12);padding:2px 6px;border-radius:4px;white-space:nowrap;flex-shrink:0">✓ ${g.entries.length} step${g.entries.length !== 1 ? 's' : ''}</span>`;
+
+    html += `<div class="${groupClass}" id="fg_${key.replace(/[^a-z0-9]/gi, '_')}">
+      <div class="feed-group-header" onclick="toggleFeedGroup(this.parentElement)">
+        <span style="font-size:12px;flex-shrink:0;line-height:1">${statusIcon}</span>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;min-width:0">
+            ${g.quoteNum ? `<span style="font-size:11px;font-weight:700;color:var(--text);font-family:var(--mono);flex-shrink:0">${esc(g.quoteNum)}</span>` : ''}
+            <span style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0" title="${esc(projectShort)}">${esc(projectShort)}</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0">
+          ${g.hasError || g.hasAction ? statusChip : ''}
+          <span style="font-size:10px;color:var(--text-3);font-family:var(--mono)">${fmtTime(g.latestTime)}</span>
+        </div>
+        <div class="feed-group-chevron" style="margin-left:4px">▶</div>
+      </div>
+      <div class="feed-group-body">
+        ${g.entries.map(e => _logEntryHtml(e)).join('')}
+      </div>
+    </div>`;
+  }
+
+  if (ungrouped.length) {
+    html += `<div style="margin-top:${groupKeys.length ? '4px' : '0'}">`;
+    for (const e of ungrouped) {
+      const showDismiss = (e.type === 'err' || e.resolved) && !_entryNeedsResponse(e);
+      html += `<div class="feed-ungrouped">
+        <div class="feed-dot" style="background:${_entryDotColor(e)}"></div>
+        <span class="feed-msg">${esc(e.msg)}</span>
+        <span class="feed-time">${fmtTime(e.time)}</span>
+        ${showDismiss ? `<button class="dismiss-btn" onclick="dismissLogEntry('${esc(e.id)}')" title="Dismiss">✕</button>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  wrap.innerHTML = html;
+
+  const actionCount = Object.values(grouped).filter(g => g.hasError || g.hasAction).length;
+  const doneCount   = Object.values(grouped).filter(g => !g.hasAction).length
+                    + ungrouped.filter(e => !_entryNeedsResponse(e)).length;
+  _updateHeader(actionCount, doneCount);
+}
+
+function _updateHeader(actionCount, doneCount) {
+  const badge = document.getElementById('feed-action-count');
+  if (badge) { badge.textContent = actionCount; badge.style.display = actionCount > 0 ? 'inline-flex' : 'none'; }
+  const clearBtn = document.getElementById('feed-clear-btn');
+  if (clearBtn) clearBtn.style.display = doneCount > 0 ? 'flex' : 'none';
+}
+
+// ── User actions ──────────────────────────────────────────────────────────────
+
+function toggleFeedGroup(el) {
+  el.classList.toggle('open');
+}
+
+// FIX 3: Clear all entries that don't have an open input/confirmation prompt.
+// This includes bare red error notifications, which previously could never leave.
+function clearDoneGroups() {
+  const groups = {}, solo = [];
+  for (const e of actLog) {
+    if (e.quoteNum && e.customer) {
+      const key = e.quoteNum + '||' + e.customer;
+      (groups[key] = groups[key] || []).push(e);
+    } else {
+      solo.push(e);
+    }
+  }
+  const toRemove = new Set();
+  for (const arr of Object.values(groups)) {
+    if (!arr.some(_entryNeedsResponse)) arr.forEach(e => toRemove.add(e.id));
+  }
+  for (const e of solo) {
+    if (!_entryNeedsResponse(e)) toRemove.add(e.id);
+  }
+  actLog = actLog.filter(e => !toRemove.has(e.id));
+  renderLog();
+}
+
+// FIX 3: Dismiss a single entry via its per-entry ✕ button.
+function dismissLogEntry(id) {
+  actLog = actLog.filter(e => e.id !== id);
+  renderLog();
+}
+
+// ── Demo data (exercises all three fixes) ─────────────────────────────────────
+
+(function loadDemo() {
+  const ago = s => new Date(Date.now() - s * 1000).toISOString();
+
+  // FIX 2 DEMO — many entries so the feed must scroll
+  addLog('Quote saved to Salesforce — Opportunity K59876_00 linked to GC account Balfour Beatty Construction, LLC', 'scan', 'K59876_00', 'Amazon AWS CMH165', ago(600));
+  addLog('Contact linked: john.smith@balfourbeatty.com (John Smith, Senior Estimator)', 'scan', 'K59876_00', 'Amazon AWS CMH165', ago(599));
+  addLog('Submittal ready — CS IWP: SCR-40/BCR-40/ECR-40 Crash Rails, SM-20 Wall Panels, ACO-8 Corner Guards', 'scan', 'K59876_00', 'Amazon AWS CMH165', ago(598));
+  addLog('Calendar event created: Bid Date 2026-06-15 added to Lukas Miller\'s calendar', 'scan', 'K59876_00', 'Amazon AWS CMH165', ago(597));
+
+  // FIX 1 DEMO — long unbreakable token that should wrap at word boundaries only
+  addLog('Models extracted: G4DPHCLB, SM-20MN, ACO8, SCR-64MN, RS-5800, FW-200, SF-200, VFR-200, 1062N — sending to CS Submittal Builder', 'scan', 'K97284_01', 'NCH Close to Home New Albany', ago(480));
+  addLog('Submittal requested from Construction Specialties — IWP: corner guards, crash rail, rub strip, wall covering .040"', 'scan', 'K97284_01', 'NCH Close to Home New Albany', ago(479));
+
+  addLog('Quote saved to Salesforce — Opportunity K11234_02 created', 'scan', 'K11234_02', 'City of Columbus Civic Center', ago(360));
+  addLog('Manufacturer submittal fetch complete — Frasch: 3 spec PDFs returned', 'scan', 'K11234_02', 'City of Columbus Civic Center', ago(359));
+
+  addLog('Quote saved to Salesforce — Opportunity K44501_00 linked', 'scan', 'K44501_00', 'Amazon HCM1 Data Center', ago(240));
+  addLog('Contact linked: jennifer.wu@turnerintl.com', 'scan', 'K44501_00', 'Amazon HCM1 Data Center', ago(239));
+
+  // FIX 3 DEMO — error that should be clearable (no open prompt)
+  addLog('GC account "NCH Healthcare — Lease & Construction" not found in Salesforce. Quote saved; link account manually.', 'err', 'K97284_01', 'NCH Close to Home New Albany', ago(478));
+
+  // FIX 3 DEMO — standalone system error (previously could never be cleared)
+  addLog('SharePoint write failed: 403 Forbidden — Files.ReadWrite.All permission not yet granted. Submittal returned as direct link instead.', 'err', null, null, ago(120));
+  addLog('SF sync complete — 14 quotes updated, 3 new contacts created', 'scan', null, null, ago(90));
+  addLog('SharePoint poll: 2 new quote PDFs detected (Interiors)', 'scan', null, null, ago(60));
+  addLog('Aging alert sent — 5 quotes over 30 days (Interiors)', 'scan', null, null, ago(30));
+})();
+</script>
+</body>
+</html>
