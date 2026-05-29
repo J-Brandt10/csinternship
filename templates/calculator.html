@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calculator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #1a1a2e;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .calculator {
+      background: #16213e;
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+      width: 320px;
+    }
+
+    .display {
+      background: #0f3460;
+      border-radius: 12px;
+      padding: 20px 16px 12px;
+      margin-bottom: 20px;
+      min-height: 90px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: flex-end;
+      overflow: hidden;
+    }
+
+    .display .expression {
+      font-size: 14px;
+      color: #a0aec0;
+      min-height: 20px;
+      word-break: break-all;
+      text-align: right;
+    }
+
+    .display .current {
+      font-size: 40px;
+      font-weight: 300;
+      color: #e2e8f0;
+      word-break: break-all;
+      text-align: right;
+      line-height: 1.1;
+    }
+
+    .display .current.error {
+      font-size: 22px;
+      color: #fc8181;
+    }
+
+    .buttons {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    button {
+      height: 64px;
+      border: none;
+      border-radius: 12px;
+      font-size: 22px;
+      font-weight: 400;
+      cursor: pointer;
+      transition: opacity 0.1s, transform 0.1s;
+      outline: none;
+    }
+
+    button:active {
+      opacity: 0.75;
+      transform: scale(0.95);
+    }
+
+    .btn-clear {
+      background: #e53e3e;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .btn-operator {
+      background: #e8994a;
+      color: #fff;
+    }
+
+    .btn-equals {
+      background: #e8994a;
+      color: #fff;
+    }
+
+    .btn-number {
+      background: #2d3748;
+      color: #e2e8f0;
+    }
+
+    .btn-decimal {
+      background: #2d3748;
+      color: #e2e8f0;
+    }
+
+    .btn-zero {
+      grid-column: span 2;
+    }
+  </style>
+</head>
+<body>
+  <div class="calculator">
+    <div class="display">
+      <div class="expression" id="expression"></div>
+      <div class="current" id="current">0</div>
+    </div>
+    <div class="buttons">
+      <button class="btn-clear" onclick="clearAll()">C</button>
+      <!-- empty cell spacers -->
+      <button class="btn-number" style="background:#1e293b;cursor:default;" disabled></button>
+      <button class="btn-number" style="background:#1e293b;cursor:default;" disabled></button>
+      <button class="btn-operator" onclick="setOperator('÷')">÷</button>
+
+      <button class="btn-number" onclick="appendDigit('7')">7</button>
+      <button class="btn-number" onclick="appendDigit('8')">8</button>
+      <button class="btn-number" onclick="appendDigit('9')">9</button>
+      <button class="btn-operator" onclick="setOperator('×')">×</button>
+
+      <button class="btn-number" onclick="appendDigit('4')">4</button>
+      <button class="btn-number" onclick="appendDigit('5')">5</button>
+      <button class="btn-number" onclick="appendDigit('6')">6</button>
+      <button class="btn-operator" onclick="setOperator('−')">−</button>
+
+      <button class="btn-number" onclick="appendDigit('1')">1</button>
+      <button class="btn-number" onclick="appendDigit('2')">2</button>
+      <button class="btn-number" onclick="appendDigit('3')">3</button>
+      <button class="btn-operator" onclick="setOperator('+')">+</button>
+
+      <button class="btn-number btn-zero" onclick="appendDigit('0')">0</button>
+      <button class="btn-decimal" onclick="appendDecimal()">.</button>
+      <button class="btn-equals" onclick="calculate()">=</button>
+    </div>
+  </div>
+
+  <script>
+    let firstOperand = null;
+    let operator = null;
+    let awaitingSecond = false;
+
+    const currentEl = document.getElementById('current');
+    const expressionEl = document.getElementById('expression');
+
+    function updateDisplay(value) {
+      currentEl.textContent = value;
+      currentEl.classList.remove('error');
+    }
+
+    function showError(msg) {
+      currentEl.textContent = msg;
+      currentEl.classList.add('error');
+    }
+
+    function appendDigit(digit) {
+      if (awaitingSecond) {
+        updateDisplay(digit);
+        awaitingSecond = false;
+      } else {
+        const cur = currentEl.textContent;
+        if (cur === '0' && digit !== '.') {
+          updateDisplay(digit);
+        } else {
+          updateDisplay(cur === 'Error' ? digit : cur + digit);
+        }
+      }
+    }
+
+    function appendDecimal() {
+      if (awaitingSecond) {
+        updateDisplay('0.');
+        awaitingSecond = false;
+        return;
+      }
+      const cur = currentEl.textContent;
+      if (currentEl.classList.contains('error')) {
+        updateDisplay('0.');
+        return;
+      }
+      if (!cur.includes('.')) {
+        updateDisplay(cur + '.');
+      }
+    }
+
+    function setOperator(op) {
+      const cur = parseFloat(currentEl.textContent);
+      if (isNaN(cur)) return;
+
+      if (firstOperand !== null && !awaitingSecond) {
+        const result = compute(firstOperand, cur, operator);
+        if (result === null) return;
+        firstOperand = result;
+        updateDisplay(formatResult(result));
+      } else {
+        firstOperand = cur;
+      }
+
+      operator = op;
+      awaitingSecond = true;
+      expressionEl.textContent = `${formatResult(firstOperand)} ${op}`;
+    }
+
+    function calculate() {
+      if (firstOperand === null || operator === null) return;
+
+      const second = parseFloat(currentEl.textContent);
+      if (isNaN(second)) return;
+
+      expressionEl.textContent = `${formatResult(firstOperand)} ${operator} ${formatResult(second)} =`;
+
+      const result = compute(firstOperand, second, operator);
+      if (result === null) return;
+
+      updateDisplay(formatResult(result));
+      firstOperand = null;
+      operator = null;
+      awaitingSecond = false;
+    }
+
+    function compute(a, b, op) {
+      switch (op) {
+        case '+': return a + b;
+        case '−': return a - b;
+        case '×': return a * b;
+        case '÷':
+          if (b === 0) {
+            showError('Cannot divide by zero');
+            expressionEl.textContent = '';
+            firstOperand = null;
+            operator = null;
+            awaitingSecond = false;
+            return null;
+          }
+          return a / b;
+      }
+      return null;
+    }
+
+    function formatResult(n) {
+      if (Number.isInteger(n)) return String(n);
+      const s = n.toPrecision(10);
+      return parseFloat(s).toString();
+    }
+
+    function clearAll() {
+      firstOperand = null;
+      operator = null;
+      awaitingSecond = false;
+      updateDisplay('0');
+      expressionEl.textContent = '';
+    }
+  </script>
+</body>
+</html>
