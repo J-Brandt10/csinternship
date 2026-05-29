@@ -17,3 +17,15 @@ def test_homepage_status(client):
 def test_homepage_content(client):
     response = client.get("/")
     assert b"CS Internship Tools - Welcome Jack!" in response.data
+
+
+def test_calculator_status(client):
+    response = client.get("/calculator")
+    assert response.status_code == 200
+
+
+def test_calculator_content(client):
+    response = client.get("/calculator")
+    assert b"Calculator" in response.data
+    assert b"clearAll" in response.data
+    assert b"calculate" in response.data
